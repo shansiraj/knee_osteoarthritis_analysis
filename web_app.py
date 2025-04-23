@@ -5,13 +5,15 @@ import torch.nn.functional as F
 import os
 import torch
 import torch.nn as nn
-from torchvision import transforms, models
+from torchvision import transforms, models, datasets
 from cnn_model import KneeOACNN
 from PIL import Image
 import pickle
 import cv2
 import base64
 from openai import OpenAI
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 from dotenv import load_dotenv
 
 is_loading_saved_model = True
@@ -208,12 +210,65 @@ def gpt_api(client,system_prompt,img_url, title):
 
     return response.choices[0].message.content
 
-
-def get_image_analysis(image_path):
+def get_image_analysis(image_path,severity):
 
     load_dotenv()
 
     client = OpenAI()
+
+    # system_prompt = '''
+    # You will be provided with an X-ray image of knee.
+    # Based on the given X-Ray image provide the knee osteoarthritis severity level at last in short.
+    # '''
+
+
+    # system_prompt = '''
+    # You are an agent specialized in X-Ray image analysis to identify Knee osteoarthritis.
+    
+    # You will be provided with an X-Ray image and the title of the item, and your goal is to identify Knee osteoarthritis severity level from 0-4.
+    
+    # Return the Knee osteoarthritis severity as a numeric value from 0-4, like 0,1,2,3,4
+    
+    # '''
+
+    # system_prompt = '''
+    # You are an agent specialized in X-Ray image analysis to identify Knee osteoarthritis.
+    
+    # You will be provided with an X-Ray image and the title of the item, and your goal is to identify Knee osteoarthritis severity level from 0-4.
+    
+    # Return the Knee osteoarthritis severity as a numeric value from 0-4, like 0,1,2,3,4
+
+    # Output should be single integer value
+    
+    # '''
+
+    # system_prompt = '''
+    # You are an AI model specialized in X-ray image analysis to identify knee osteoarthritis severity using the Kellgren-Lawrence (KL) grading system.
+
+    # You will be provided with an X-ray image of the knee and the title of the item, and your goal is to identify the severity of knee osteoarthritis on a scale from 0 to 4. Use the following criteria based on the Kellgren-Lawrence grading system:
+
+    # - **Grade 0**: No signs of osteoarthritis; normal knee joint with no evidence of narrowing or osteophytes.
+    # - **Grade 1**: Doubtful narrowing of the joint space with possible minor osteophyte formation.
+    # - **Grade 2**: Definite osteophytes with possible joint space narrowing.
+    # - **Grade 3**: Moderate multiple osteophytes, definite joint space narrowing, possible sclerosis, and deformity of bone ends.
+    # - **Grade 4**: Large osteophytes, severe joint space narrowing, marked sclerosis, and definite deformity of the bone ends.
+
+    # Return the knee osteoarthritis severity as a numeric grade from 0 to 4 according to this classification.
+
+    # Output should be a single integer value between 0 and 4 (e.g., 0, 1, 2, 3, or 4).
+    
+    # '''
+
+    # system_prompt = '''
+    # You will be provided with an X-ray image of knee.
+    # Based on the signs of osteoarthritis in the X-Ray image provide the knee osteoarthritis severity level from 0-4.
+    # '''
+
+    # system_prompt = '''
+    # You will be provided with an X-ray image of knee.
+    # Based on the signs of osteoarthritis in the X-Ray image provide the knee osteoarthritis severity level from 0-4.
+    # Anyway I need an answer from 0-4 
+    # '''
 
     system_prompt = '''
     You will be provided with an X-ray image of knee.
@@ -222,7 +277,89 @@ def get_image_analysis(image_path):
     '''
     title = "X-Ray Image of Knee"
 
+    # system_prompt = '''
+    # You will be provided with an X-ray image of knee.
+    # Provide the signs of osteoarthritis.
+    # Severity level is ''' + str(severity) + '''
+    # provide the severity level at last in short.
+    # '''
+    title = "X-Ray Image of Knee"
+
     return gpt_api(client,system_prompt,image_path,title)
+
+
+def get_image_analysis_for_model_eval(image_path):
+
+    load_dotenv()
+
+    client = OpenAI()
+
+    system_prompt = '''
+    You are an agent specialized in X-Ray image analysis to identify Knee osteoarthritis.
+    
+    You will be provided with an X-Ray image and the title of the item, and your goal is to identify Knee osteoarthritis severity level from 0-4.
+    
+    Return the Knee osteoarthritis severity as a numeric value from 0-4, like 0,1,2,3,4
+    
+    Output should be single integer value
+    
+    '''
+
+    title = "X-Ray Image of Knee"
+
+    return gpt_api(client,system_prompt,image_path,title)
+
+  
+
+def evaluate_gen_ai():
+    # Define dataset paths
+    dataset_path = '../dataset/' # root path for image datasets
+    test_dir = dataset_path + 'gen_ai_test' # path of test dataset
+
+    with open(mean_std, 'rb') as f:
+        data = pickle.load(f)
+
+    mean = data['mean']
+    std = data['std']
+
+    pred_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),        
+    transforms.Normalize(mean=mean, std=std)
+    ])
+
+    test_dataset = datasets.ImageFolder(test_dir,transform=pred_transform)
+
+    true_labels = []
+    pred_labels = []
+    x = 0
+
+    for img, label in test_dataset:
+       
+        img_path = f"temp_image_for_eval.jpg"  # Temporary path to save image
+
+        img = transforms.ToPILImage()(img)
+        img.save(img_path)
+
+        x = x+1
+        print ("Analysing Image No : ",x)
+
+        pred_label = get_image_analysis_for_model_eval(img_path)
+
+        true_labels.append(int(label))
+        pred_labels.append(int(pred_label))
+
+    cm = confusion_matrix(true_labels, pred_labels, labels=[0, 1, 2, 3, 4])
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[0, 1, 2, 3, 4])
+
+    # Plot and display in Streamlit
+    fig, ax = plt.subplots()
+    disp.plot(cmap=plt.cm.Blues, ax=ax)
+    ax.set_title("Gen AI results for Prompt Text Option 3")
+    ax.set_xlabel("Predicted Labels")
+    ax.set_ylabel("True Labels")
+    
+    st.pyplot(fig)
 
 def format_page():
     st.sidebar.markdown(
@@ -371,11 +508,16 @@ def main():
 
             with col2:
                 st.write("Gen AI Textual Analysis")
-                image_analysis = get_image_analysis(img_path)
+                image_analysis = get_image_analysis(img_path,severity_level)
+                # image_analysis = get_image_analysis_for_model_eval(img_path)
+                
                 st.write(image_analysis)
 
         else:
             st.error("Image is not loaded")
+
+    # if st.sidebar.button('genAI Model Evaluation'):
+    #     evaluate_gen_ai()
 
     format_page()
 
